@@ -10,7 +10,7 @@ import (
 // DumpProfile dumps the profiles given to writer in go coverage format.
 func DumpProfile(profiles []*cover.Profile, writer io.Writer) error {
 	if len(profiles) == 0 {
-		return errors.New("can't write an empty profiles")
+		return errors.New("can't write an empty profile")
 	}
 	if _, err := io.WriteString(writer, "mode: "+profiles[0].Mode+"\n"); err != nil {
 		return err
