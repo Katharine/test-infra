@@ -1,11 +1,11 @@
 package util
 
 import (
-	"k8s.io/test-infra/coverage/pkg/cov"
 	"fmt"
-	"os"
-	"io"
 	"golang.org/x/tools/cover"
+	"io"
+	"k8s.io/test-infra/coverage/pkg/cov"
+	"os"
 )
 
 func DumpProfile(destination string, profile []*cover.Profile) error {

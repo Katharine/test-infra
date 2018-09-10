@@ -3,9 +3,9 @@ package merge
 import (
 	"github.com/spf13/cobra"
 	"golang.org/x/tools/cover"
-	"log"
 	"k8s.io/test-infra/coverage/pkg/cov"
 	"k8s.io/test-infra/coverage/pkg/util"
+	"log"
 )
 
 type flags struct {
