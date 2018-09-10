@@ -1,12 +1,17 @@
 package cov
 
 import (
-	"golang.org/x/tools/cover"
-	"sort"
 	"errors"
 	"fmt"
+	"golang.org/x/tools/cover"
+	"sort"
 )
 
+// MergeProfiles merges two coverage profiles.
+// The profiles are expected to be similar - that is, from multiple invocations of a
+// single binary, or multiple binaries using the same codebase.
+// In particular, any source files with the same path must have had identical content
+// when building the binaries.
 func MergeProfiles(a []*cover.Profile, b []*cover.Profile) ([]*cover.Profile, error) {
 	var result []*cover.Profile
 	files := make(map[string]*cover.Profile, len(a))
@@ -46,6 +51,9 @@ func MergeProfiles(a []*cover.Profile, b []*cover.Profile) ([]*cover.Profile, er
 	return result, nil
 }
 
+// MergeMultipleProfiles merges more than two profiles together.
+// MergeMultipleProfiles is equivalent to calling MergeProfiles on pairs of profiles
+// until only one profile remains.
 func MergeMultipleProfiles(profiles [][]*cover.Profile) ([]*cover.Profile, error) {
 	if len(profiles) < 1 {
 		return nil, errors.New("can't merge zero profiles")
