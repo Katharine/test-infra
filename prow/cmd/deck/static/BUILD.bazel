@@ -61,6 +61,19 @@ rollup_bundle(
     ],
 )
 
+ts_library(
+    name = "spyglass",
+    srcs = glob(["spyglass/*.ts"]),
+)
+
+rollup_bundle(
+    name = "spyglass_bundle",
+    entry_point = "prow/cmd/deck/static/spyglass/spyglass",
+    deps = [
+        ":spyglass",
+    ],
+)
+
 filegroup(
     name = "resources",
     srcs = glob(
@@ -76,6 +89,7 @@ filegroup(
         ":index",
         ":plugins",
         ":pr",
+        ":spyglass_bundle",
         ":tide",
     ],
 )
