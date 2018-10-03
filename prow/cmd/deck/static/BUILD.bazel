@@ -26,13 +26,19 @@ rollup_bundle(
     ],
 )
 
-rollup_bundle(
-    name = "plugins",
-    srcs = [
-        "plugins-script.js",
-    ],
-    entry_point = "prow/cmd/deck/static/plugins-script.js",
+ts_library(
+    name = "plugin_help",
+    srcs = glob(["plugin-help/*.ts"]) + ["vendor.d.ts"],
     deps = [
+        ":api",
+    ],
+)
+
+rollup_bundle(
+    name = "plugin_help_bundle",
+    entry_point = "prow/cmd/deck/static/plugin-help/plugin-help",
+    deps = [
+        ":plugin_help",
         "@npm//:dialog-polyfill",
     ],
 )
@@ -64,13 +70,19 @@ rollup_bundle(
     ],
 )
 
-rollup_bundle(
+ts_library(
     name = "command_help",
-    srcs = [
-        "command-help-script.js",
-    ],
-    entry_point = "prow/cmd/deck/static/command-help-script.js",
+    srcs = glob(["command-help/*.ts"]) + ["vendor.d.ts"],
     deps = [
+        ":api",
+    ],
+)
+
+rollup_bundle(
+    name = "command_help_bundle",
+    entry_point = "prow/cmd/deck/static/command-help/command-help",
+    deps = [
+        ":command_help",
         "@npm//:dialog-polyfill",
     ],
 )
@@ -86,8 +98,8 @@ filegroup(
 filegroup(
     name = "all-scripts",
     srcs = [
-        ":command_help",
-        ":plugins",
+        ":command_help_bundle",
+        ":plugin_help_bundle",
         ":pr",
         ":prow_bundle",
         ":tide_bundle",
