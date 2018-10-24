@@ -18,6 +18,7 @@ package html
 
 import (
 	"fmt"
+	"go/build"
 	"html/template"
 	"io"
 	"io/ioutil"
@@ -25,10 +26,12 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/tools/cover"
 )
 
 type flags struct {
-	OutputFile string
+	OutputFile   string
+	IncludeLines bool
 }
 
 // MakeCommand returns a `diff` command.
@@ -51,6 +54,7 @@ indicating the change from the column immediately to its right.`,
 		},
 	}
 	cmd.Flags().StringVarP(&flags.OutputFile, "output", "o", "-", "output file")
+	cmd.Flags().BoolVar(&flags.IncludeLines, "enable-line-coverage", false, "whether to enable line coverage (and include all covered files in the source)")
 	return cmd
 }
 
@@ -109,6 +113,37 @@ func run(flags *flags, cmd *cobra.Command, args []string) {
 		coverageFiles = append(coverageFiles, coverageFile{Path: arg, Content: string(content)})
 	}
 
+	var files map[string]string
+	if flags.IncludeLines {
+		// This requires us to include the source of every covered file. Fortunately, we know where to find them.
+		root := filepath.Join(build.Default.GOPATH, "src")
+		files = make(map[string]string)
+		mem := 0
+		for _, coverageFile := range coverageFiles {
+			profiles, err := cover.ParseProfiles(coverageFile.Path)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Couldn't parse coverage file: %v", err)
+				os.Exit(1)
+			}
+			for _, p := range profiles {
+				files[p.FileName] = ""
+				mem += len(p.FileName)
+			}
+		}
+
+		for path := range files {
+			content, err := ioutil.ReadFile(filepath.Join(root, path))
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Couldn't read %s: %v", path, err)
+				os.Exit(1)
+			}
+			files[path] = string(content)
+			mem += len(files[path])
+		}
+
+		fmt.Fprintf(os.Stderr, "Memory used to include line coverage: %d", mem)
+	}
+
 	outputPath := flags.OutputFile
 	var output io.Writer
 	if outputPath == "-" {
@@ -126,7 +161,8 @@ func run(flags *flags, cmd *cobra.Command, args []string) {
 	err = tpl.Execute(output, struct {
 		Script   template.JS
 		Coverage []coverageFile
-	}{template.JS(script), coverageFiles})
+		Files    map[string]string
+	}{template.JS(script), coverageFiles, files})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Couldn't write output file: %v.", err)
 	}

@@ -10,6 +10,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//vendor/github.com/spf13/cobra:go_default_library",
+        "//vendor/golang.org/x/tools/cover:go_default_library",
     ],
 )
 
