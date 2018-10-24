@@ -46,7 +46,7 @@ function filenameForDisplay(path: string): string {
 function loadEmbeddedProfiles(): Array<{name: string, coverage: Coverage}> {
   return embeddedProfiles.map(({path, content}) => ({
                                 name: filenameForDisplay(path),
-                                coverage: filterCoverage(parseCoverage(content))
+                                coverage: coverageWithConfidence(filterCoverage(parseCoverage(content)), 0.8)
                               }));
 }
 
@@ -54,6 +54,22 @@ async function loadProfile(path: string): Promise<Coverage> {
   const response = await fetch(path, {credentials: 'include'});
   const content = await response.text();
   return filterCoverage(parseCoverage(content));
+}
+
+function maxCoverage(coverage: Coverage): number {
+  return Math.max(...map(coverage.files.values(), (c) => Math.max(...c.blocks.map((b) => b.hits))));
+}
+
+function coverageWithConfidence(coverage: Coverage, confidence: number): Coverage {
+  const minHits = maxCoverage(coverage) * confidence;
+  for (const file of coverage.files.values()) {
+    for (const block of file.blocks) {
+      if (block.hits < minHits) {
+        block.hits = 0;
+      }
+    }
+  }
+  return coverage;
 }
 
 async function init(): Promise<void> {
@@ -105,9 +121,9 @@ function coveragesForPrefix(coverages: Coverage[], prefix: string):
               if (next) {
                 const nextCoverage =
                     next.coveredStatements / next.totalStatements;
-                if (coverage > nextCoverage) {
+                if (coverage > nextCoverage + 0.0005) {
                   arrow = '▲';
-                } else if (coverage < nextCoverage) {
+                } else if (coverage < nextCoverage - 0.0005) {
                   arrow = '▼';
                 }
               }
