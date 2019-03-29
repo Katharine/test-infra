@@ -27,6 +27,7 @@ import (
 	"io/ioutil"
 	"math"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -42,7 +43,7 @@ func New(config Config) *Client {
 	return &Client{Config: config}
 }
 
-// Calls most Slack API methods by name. If the API is normal but the URL is weird,
+// CallMethod calls most Slack API methods by name. If the API is normal but the URL is weird,
 // providing a complete https:// URL as the API name also works.
 func (c *Client) CallMethod(api string, args interface{}, ret interface{}) error {
 	marshalled, err := json.Marshal(args)
@@ -50,16 +51,41 @@ func (c *Client) CallMethod(api string, args interface{}, ret interface{}) error
 		return fmt.Errorf("failed to marshal slack message: %v", err)
 	}
 	b := bytes.NewBuffer(marshalled)
-	url := api
-	if !strings.HasPrefix(url, "https://") {
-		url = "https://slack.com/api/" + api
-	}
-	req, err := http.NewRequest("POST", url, b)
+	req, err := http.NewRequest("POST", slackMethodToURL(api), b)
 	if err != nil {
 		return fmt.Errorf("failed to create HTTP request: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
 	req.Header.Set("Authorization", "Bearer "+c.Config.AccessToken)
+	return handleSlackRequest(req, ret)
+}
+
+// CallOldMethod calls Slack API methods that for some reason continue to not support JSON requests.
+func (c *Client) CallOldMethod(api string, args map[string]string, ret interface{}) error {
+	vs := url.Values{}
+	for k, v := range args {
+		vs[k] = []string{v}
+	}
+	vs["token"] = []string{c.Config.AccessToken}
+	q := vs.Encode()
+	b := bytes.NewBufferString(q)
+	u := slackMethodToURL(api)
+	req, err := http.NewRequest("POST", u, b)
+	if err != nil {
+		return fmt.Errorf("failed to create HTTP request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
+	return handleSlackRequest(req, ret)
+}
+
+func slackMethodToURL(method string) string {
+	if !strings.HasPrefix(method, "https://") {
+		return "https://slack.com/api/" + method
+	}
+	return method
+}
+
+func handleSlackRequest(req *http.Request, ret interface{}) error {
 	client := http.Client{}
 	response, err := client.Do(req)
 	if err != nil {

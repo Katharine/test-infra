@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -24,12 +25,15 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
+	"time"
 
 	"k8s.io/test-infra/experiment/slack/slack"
 )
 
 type handler struct {
-	client *slack.Client
+	client     *slack.Client
+	adminToken string
 }
 
 func logError(rw http.ResponseWriter, format string, args ...interface{}) {
@@ -65,10 +69,146 @@ func (h *handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if interaction.Type == "message_action" && interaction.CallbackID == "report_message" {
-		h.handleReportMessage(interaction, rw)
-	} else if interaction.Type == "dialog_submission" && interaction.CallbackID == "send_report" {
-		h.handleReportSubmission(interaction, rw)
+		if isMod, err := h.userHasModerationPowers(interaction.User.ID); err != nil && isMod {
+			h.handleModerateMessage(interaction, rw)
+		} else {
+			h.handleReportMessage(interaction, rw)
+		}
+	} else if interaction.Type == "dialog_submission" {
+		switch interaction.CallbackID {
+		case "send_report":
+			h.handleReportSubmission(interaction, rw)
+		case "moderate_user":
+			h.handleModerateSubmission(interaction, rw)
+		}
 	}
+}
+
+func (h *handler) handleModerateMessage(interaction slackInteraction, rw http.ResponseWriter) {
+	deactivateElement := slack.SelectElement{
+		Name:  "deactivate",
+		Label: fmt.Sprintf("Would you like to deactivate %s?", slack.EscapeMessage(interaction.User.Name)),
+		Options: []slack.SelectOption{
+			{
+				Label: "No",
+				Value: "no",
+			},
+			{
+				Label: "Yes",
+				Value: "yes",
+			},
+		},
+		Value: "no",
+	}
+	removeContentElement := slack.SelectElement{
+		Name:  "remove_content",
+		Label: fmt.Sprintf("How much content would you like to remove?"),
+		Options: []slack.SelectOption{
+			{
+				Label: "None",
+				Value: "",
+			},
+			{
+				Label: "1 hour",
+				Value: "1h",
+			},
+			{
+				Label: "6 hours",
+				Value: "6h",
+			},
+			{
+				Label: "12 hours",
+				Value: "12h",
+			},
+			{
+				Label: "24 hours",
+				Value: "24h",
+			},
+			{
+				Label: "48 hours",
+				Value: "48h",
+			},
+		},
+	}
+	dialog := slack.DialogWrapper{
+		TriggerID: interaction.TriggerID,
+		Dialog: slack.Dialog{
+			CallbackID:     "moderate_user",
+			NotifyOnCancel: false,
+			Title:          "Moderate User",
+			Elements:       []interface{}{deactivateElement, removeContentElement},
+			State:          interaction.User.ID,
+		},
+	}
+	if err := h.client.CallMethod("dialog.open", dialog, nil); err != nil {
+		logError(rw, "Failed to call dialog.open: %v", err)
+		return
+	}
+}
+
+func (h *handler) handleModerateSubmission(interaction slackInteraction, rw http.ResponseWriter) {
+	isMod, err := h.userHasModerationPowers(interaction.User.ID)
+	if err != nil || !isMod {
+		logError(rw, "User %s (%s) does not seem to be a mod: %v", interaction.User.ID, interaction.User.Name, err)
+		return
+	}
+	var messages []string
+	targetUser := interaction.State
+	if interaction.Submission["deactivate"] == "yes" {
+		if err := h.deactivateUser(interaction, targetUser); err != nil {
+			messages = append(messages, fmt.Sprintf("Failed to deactivate user %s (%s): %v", interaction.User.ID, interaction.User.Name, err))
+		} else {
+			messages = append(messages, fmt.Sprintf("Successfully deactivated user %s (%s)", interaction.User.ID, interaction.User.Name))
+		}
+	}
+	if remove, ok := interaction.Submission["remove_content"]; ok && remove != "" {
+		duration, err := time.ParseDuration(remove)
+		if err != nil {
+			messages = append(messages, fmt.Sprintf("Failed to parse removal duration, and therefore could not remove any content: %v", err))
+		}
+		removedFiles, remainingFiles, removedMessages, remainingMessages, err := h.removeUserContent(interaction, duration, targetUser)
+
+		if err != nil {
+			messages = append(messages, fmt.Sprintf("Failed to remove any content: %v", err))
+		}
+
+		if remainingFiles == 0 && remainingMessages == 0 {
+			messages = append(messages, fmt.Sprintf("Successfully removed %d messages and %d files", removedMessages, removedFiles))
+		} else {
+			messages = append(messages, fmt.Sprintf("Couldn't remove all content. Removed %d messages and %d files, but there are %d messages and %d files left.", removedMessages, removedFiles, remainingMessages, remainingFiles))
+		}
+	}
+
+	response := map[string]interface{}{
+		"text":             strings.Join(messages, "\n"),
+		"response_type":    "ephemeral",
+		"replace_original": false,
+	}
+
+	if h.client.CallMethod(interaction.ResponseURL, response, nil) != nil {
+		logError(rw, "Failed to send response: %v.", err)
+		return
+	}
+}
+
+func (h *handler) deactivateUser(interaction slackInteraction, targetUser string) error {
+	result := struct {
+		Ok    bool   `json:"ok"`
+		Error string `json:"error,omitempty"`
+	}{}
+
+	resp, err := http.Post("https://slack.com/api/users.admin.setInactive", "application/x-www-form-urlencoded", bytes.NewBufferString("token="+h.adminToken+"&user="+targetUser))
+	if err != nil {
+		return fmt.Errorf("couldn't deactivate user %s: %v", targetUser, err)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return fmt.Errorf("failed to decode json: %v", err)
+	}
+	if !result.Ok {
+		return fmt.Errorf("couldn't update membership: %s", result.Error)
+	}
+
+	return nil
 }
 
 func (h *handler) handleReportMessage(interaction slackInteraction, rw http.ResponseWriter) {
@@ -228,14 +368,30 @@ func (h *handler) getPermalink(channel string, ts string) (string, error) {
 }
 
 func (h *handler) getDisplayName(id string) (string, error) {
+	user, err := h.getUserInfo(id)
+	if err != nil {
+		return "", err
+	}
+	return user.Name, nil
+}
+
+func (h *handler) getUserInfo(id string) (slack.User, error) {
 	user := struct {
 		User slack.User `json:"user"`
 	}{}
 
 	if err := h.client.CallOldMethod("users.info", map[string]string{"user": id}, &user); err != nil {
-		return "", fmt.Errorf("failed to get user: %v", err)
+		return slack.User{}, fmt.Errorf("failed get user: %v", err)
 	}
-	return user.User.Name, nil
+	return user.User, nil
+}
+
+func (h *handler) userHasModerationPowers(id string) (bool, error) {
+	user, err := h.getUserInfo(id)
+	if err != nil {
+		return false, err
+	}
+	return user.IsAdmin || user.IsOwner || user.IsPrimaryOwner, nil
 }
 
 // The JSON strings here are short because we can only put a limited amount of information in
