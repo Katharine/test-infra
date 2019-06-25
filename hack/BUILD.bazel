@@ -31,18 +31,15 @@ sh_test(
     tags = ["lint"],
 )
 
-nodejs_test(
+sh_test(
     name = "verify-tslint",
+    srcs = ["verify-tslint.sh"],
     data = [
         "//:all-srcs",
-        "@npm//tslint",
+        "@npm//tslint/bin:tslint",
     ],
-    entry_point = "tslint/bin/tslint",
+    args = ["$(location @npm//tslint/bin:tslint)"],
     tags = ["lint"],
-    templated_args = [
-        "-p",
-        ".",
-    ],
 )
 
 MISSPELL = "//vendor/github.com/client9/misspell/cmd/misspell"
